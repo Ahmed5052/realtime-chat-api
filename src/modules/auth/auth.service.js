@@ -3,7 +3,7 @@ import { hashPassword , comparePassword } from "../../utils/hash.js";
 import { signAccessToken, generateRefreshToken, hashRefreshToken, getRefreshTokenExpiry } from "../../utils/tokens.js";
 import {AppError} from "../../utils/AppError.js";
 
-const issueTokens = async (userId) => {
+export async function issueTokens (userId) {
     const accessToken = signAccessToken(userId);
     const refreshToken = generateRefreshToken();
     const hashedRefreshToken = await hashRefreshToken(refreshToken);
@@ -20,7 +20,7 @@ const issueTokens = async (userId) => {
     return { accessToken, refreshToken };
 };
 
-export const register = async (userData) => {
+export async function register (userData) {
     const { username, email, password } = userData;
     const existingUser = await prisma.user.findFirst({
         where: { OR: [{ email }, { username }] },
@@ -38,10 +38,10 @@ export const register = async (userData) => {
     });
 
     const tokens = await issueTokens(user.id);
-    return {user: {username: user.username , email: user.email} , ...tokens};
+    return {user: {id: user.id, username: user.username , email: user.email} , ...tokens};
 };
 
-export const login = async (userData) => {
+export async function login (userData) {
     const { email, password } = userData;
     const user = await prisma.user.findUnique({
         where: { email },
@@ -55,10 +55,10 @@ export const login = async (userData) => {
     }
 
     const tokens = await issueTokens(user.id);
-    return {user: {username: user.username , email: user.email} , ...tokens};
+    return {user: {id: user.id, username: user.username , email: user.email} , ...tokens};
 };
 
-export const refreshAccessToken = async (refreshToken) => {
+export async function refreshAccessToken (refreshToken) {
     const hashedRefreshToken = await hashRefreshToken(refreshToken);
     const storedToken = await prisma.refreshToken.findUnique({
         where: {tokenHash : hashedRefreshToken},

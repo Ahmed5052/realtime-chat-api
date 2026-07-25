@@ -5,12 +5,11 @@ import crypto from "crypto";
 const ACCESS_TOKEN_EXPIRY = "15m";
 const REFRESH_TOKEN_EXPIRY = 7;
 
-export const signAccessToken = (userid) => {
-    const accessToken = jwt.sign({userid}, env.jwtSecret, {
-        expiresIn: ACCESS_TOKEN_EXPIRY,
-    });
-    return { accessToken };
-}
+export const signAccessToken = (userId) => {
+  return jwt.sign({ sub: userId }, env.jwtSecret, {
+    expiresIn: ACCESS_TOKEN_EXPIRY,
+  });
+};
 
 export const verifyAccessToken = (token) => {
     const decodedToken = jwt.verify(token, env.jwtSecret);
