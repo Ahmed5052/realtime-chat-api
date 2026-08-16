@@ -4,6 +4,9 @@ import { defineConfig } from "eslint/config";
 
 export default defineConfig([
   {
+    ignores: ["src/generated/**"]
+  },
+  {
     files: ["**/*.{js,mjs,cjs}"],
     plugins: { js },
     extends: ["js/recommended"],
@@ -12,4 +15,12 @@ export default defineConfig([
       "no-unused-vars": ["error", { "argsIgnorePattern": "^_" }]
     }
   },
+  {
+    files: ["tests/**/*.{js,mjs,cjs}"],
+    languageOptions: {
+      globals: {
+        ...globals.jest,
+      }
+    }
+  }
 ]);

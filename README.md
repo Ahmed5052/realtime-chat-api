@@ -1,8 +1,8 @@
 # Real-Time Chat API
 
-A backend REST + real-time API for a chat application, built as a portfolio project to demonstrate professional backend development practices: secure authentication, relational data modeling, real-time communication, and production-style engineering workflows.
+A backend REST + real-time API for a chat application, built as a portfolio project to demonstrate professional backend development practices: secure authentication, relational data modeling, real-time communication, automated testing, and production-style engineering workflows.
 
-This project is under active development. This README reflects what has been built and tested so far: **authentication, the core data model/messaging layer, and real-time communication**.
+This project is under active development. This README reflects what has been built and tested so far: **authentication, the core data model/messaging layer, real-time communication, and an automated test suite**.
 
 ## Tech Stack
 
@@ -15,6 +15,7 @@ This project is under active development. This README reflects what has been bui
 - **Auth:** JWT (access tokens) + rotating refresh tokens
 - **Password hashing:** bcrypt
 - **Rate limiting:** express-rate-limit
+- **Testing:** Jest + Supertest
 
 ## Project Structure
 
@@ -39,6 +40,12 @@ src/
 ├── generated/          # Prisma-generated client (auto-generated, gitignored)
 ├── app.js              # Express app assembly
 └── server.js            # entrypoint (HTTP server + Socket.IO)
+
+tests/
+├── unit/                # isolated logic tests (hashing, tokens) — no database
+├── integration/          # full HTTP request/response tests via Supertest, real test DB
+├── helpers/               # shared test utilities (e.g. test user creation)
+└── setup.js                # loads .env.test before any test runs
 ```
 
 ## Features Implemented So Far
@@ -70,6 +77,13 @@ src/
 - **Typing indicators** (`typing:start` / `typing:stop`): lightweight, ephemeral broadcasts with no database involvement; correctly excludes the sender from receiving their own typing event
 - **Presence tracking** (`presence:online` / `presence:offline`): tracks online status per user (not per connection) using a connection-count map, so a user with multiple open tabs/devices is only marked offline once _all_ of their connections close; presence changes are broadcast once per user even when they share multiple conversations with the observer, avoiding duplicate events
 
+### Automated Testing
+
+- **Unit tests** for isolated logic (password hashing, JWT signing/verification) with no database dependency
+- **Integration tests** (via Supertest) covering the full HTTP request/response cycle for auth, conversations, and messages, run against a dedicated, isolated test database
+- Coverage includes happy paths, validation failures, authorization boundaries (e.g. non-participants blocked from reading/writing), and business-logic edge cases such as refresh token reuse detection and conversation deduplication
+- Rate limiting is automatically bypassed in the test environment so it doesn't interfere with tests unrelated to it, while remaining fully active in development/production
+
 ## API Endpoints (implemented so far)
 
 | Method | Endpoint                                  | Auth required | Description                                              |
@@ -81,8 +95,8 @@ src/
 | GET    | `/conversations`                          |      Yes      | List all conversations the authenticated user is part of |
 | GET    | `/conversations/:conversationId/messages` |      Yes      | Fetch paginated message history (cursor-based)           |
 | POST   | `/conversations/:conversationId/messages` |      Yes      | Send a message                                           |
-| PATCH  | `/messages/:messageId`                    |      Yes      | Edit a message (sender only)                             |
-| DELETE | `/messages/:messageId`                    |      Yes      | Soft-delete a message (sender only)                      |
+| PATCH  | `/conversations/messages/:messageId`      |      Yes      | Edit a message (sender only)                             |
+| DELETE | `/conversations/messages/:messageId`      |      Yes      | Soft-delete a message (sender only)                      |
 
 ## Socket.IO Events (implemented so far)
 
@@ -118,6 +132,24 @@ npx prisma migrate dev
 npm run dev
 ```
 
+## Running Tests
+
+Tests run against a separate, isolated database so they never touch development data.
+
+```bash
+# One-time setup: create the test database
+docker exec -it chat_postgres psql -U chatuser -d chatdb -c "CREATE DATABASE chatdb_test;"
+
+# Apply migrations to the test database
+$env:DATABASE_URL="postgresql://chatuser:chatpassword@localhost:5432/chatdb_test"
+npx prisma migrate deploy
+
+# Run the full test suite
+npm test
+```
+
+`.env.test` holds the test environment's configuration and is loaded automatically before tests run.
+
 ## Design Decisions
 
 A few choices worth calling out, since they reflect deliberate tradeoffs rather than defaults:
@@ -127,8 +159,9 @@ A few choices worth calling out, since they reflect deliberate tradeoffs rather 
 - **One schema for 1-to-1 and group chats** — rather than separate tables/logic for direct messages vs. group messages, a single `Conversation` model (differentiated by an `isGroup` flag and participant count) avoids duplicating every feature built on top of it.
 - **Shared service layer between REST and sockets** — rather than reimplementing message-sending logic for the socket handler, it calls the exact same service function the REST endpoint uses. This guarantees both interfaces behave identically and eliminates an entire class of bugs where the two could silently drift apart.
 - **Connection-count presence tracking, not connection-existence** — presence is tracked as a count per user rather than a boolean per socket, so a user with multiple open tabs or devices isn't incorrectly marked offline when only one of their connections closes.
+- **Isolated test database over shared dev database** — running tests against the same database used for manual development testing would cause tests to interfere with each other and with manual testing sessions. A dedicated test database keeps automated tests deterministic and repeatable.
 - **Plain JavaScript, not TypeScript** — chosen deliberately to build a solid grasp of Node.js fundamentals (ES modules, async patterns, Express internals) before introducing a type system on top.
 
 ## What's Coming Next
 
-Redis-backed horizontal scaling (allowing multiple server instances to share socket state), an automated test suite, and a full Docker/CI deployment setup are planned next.
+Redis-backed horizontal scaling (allowing multiple server instances to share socket state) and a full Docker/CI deployment setup are planned next.
