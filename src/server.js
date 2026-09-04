@@ -6,7 +6,7 @@ import { initSocketServer } from './sockets/index.js';
 
 const httpServer = createServer(app);
 
-initSocketServer(httpServer);
+await initSocketServer(httpServer);
 
 httpServer.listen(env.port, () => {
   console.log(`Server running on http://localhost:${env.port}`);

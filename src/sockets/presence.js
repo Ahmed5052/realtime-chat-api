@@ -1,24 +1,22 @@
-const onlineUsers = new Map();
+const PRESENCE_KEY = 'presence:online_users';
 
-export function markUserOnline(userId) {
-  const currentCount = onlineUsers.get(userId) || 0;
-  onlineUsers.set(userId, currentCount + 1);
-
-  return currentCount === 0;
+export async function markUserOnline(redisClient, userId) {
+  const newCount = await redisClient.hIncrBy(PRESENCE_KEY, userId, 1);
+  return newCount === 1;
 }
 
-export function markUserOffline(userId) {
-  const currentCount = onlineUsers.get(userId) || 0;
+export async function markUserOffline(redisClient, userId) {
+  const newCount = await redisClient.hIncrBy(PRESENCE_KEY, userId, -1);
 
-  if (currentCount <= 1) {
-    onlineUsers.delete(userId);
+  if (newCount <= 0) {
+    await redisClient.hDel(PRESENCE_KEY, userId);
     return true;
   }
 
-  onlineUsers.set(userId, currentCount - 1);
   return false;
 }
 
-export function isUserOnline(userId) {
-  return onlineUsers.has(userId);
+export async function isUserOnline(redisClient, userId) {
+  const count = await redisClient.hGet(PRESENCE_KEY, userId);
+  return count !== null && Number(count) > 0;
 }

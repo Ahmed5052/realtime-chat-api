@@ -1,15 +1,15 @@
 import { markUserOnline, markUserOffline } from '../presence.js';
 import { prisma } from '../../config/database.js';
 
-export async function registerPresenceHandlers(io, socket) {
-  const justCameOnline = markUserOnline(socket.userId);
+export async function registerPresenceHandlers(io, socket, redisClient) {
+  const justCameOnline = await markUserOnline(redisClient, socket.userId);
 
   if (justCameOnline) {
     await broadcastPresenceToUserConversations(io, socket.userId, 'presence:online');
   }
 
   socket.on('disconnect', async () => {
-    const justWentOffline = markUserOffline(socket.userId);
+    const justWentOffline = await markUserOffline(redisClient, socket.userId);
 
     if (justWentOffline) {
       await broadcastPresenceToUserConversations(io, socket.userId, 'presence:offline');

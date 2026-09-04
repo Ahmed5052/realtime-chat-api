@@ -1,0 +1,11 @@
+node_modules
+.git
+.gitignore
+.env
+.env.*
+src/generated
+npm-debug.log
+*.md
+.vscode
+test-socket-*.js
+coverage
