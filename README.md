@@ -1,21 +1,29 @@
 # Real-Time Chat API
 
-A backend REST + real-time API for a chat application, built as a portfolio project to demonstrate professional backend development practices: secure authentication, relational data modeling, real-time communication, automated testing, and production-style engineering workflows.
+A backend REST + real-time API for a chat application, built as a portfolio project to demonstrate professional backend development practices: secure authentication, relational data modeling, real-time communication, automated testing, and production-style DevOps.
 
-This project is under active development. This README reflects what has been built and tested so far: **authentication, the core data model/messaging layer, real-time communication, and an automated test suite**.
+This project is under active development. This README reflects what has been built and tested so far: **authentication, the core data model/messaging layer, real-time communication, an automated test suite, and a containerized, CI-tested deployment setup**.
+
+## Architecture
+
+![Architecture diagram](./docs/architecture.svg)
 
 ## Tech Stack
 
-- **Runtime:** Node.js (ES Modules)
+- **Runtime:** Node.js 22 (ES Modules)
 - **Framework:** Express
-- **Real-time:** Socket.IO
-- **Database:** PostgreSQL (via Docker)
+- **Real-time:** Socket.IO (with Redis adapter for multi-instance scaling)
+- **Database:** PostgreSQL
+- **Cache / pub-sub:** Redis
 - **ORM:** Prisma 7 (with `@prisma/adapter-pg`)
 - **Validation:** Zod v4
 - **Auth:** JWT (access tokens) + rotating refresh tokens
 - **Password hashing:** bcrypt
 - **Rate limiting:** express-rate-limit
 - **Testing:** Jest + Supertest
+- **Containerization:** Docker (multi-stage build), Docker Compose
+- **Reverse proxy:** Nginx (with WebSocket upgrade support)
+- **CI:** GitHub Actions (lint → migrate → test → build)
 
 ## Project Structure
 
@@ -26,7 +34,8 @@ src/
 ├── modules/
 │   ├── auth/          # register, login, refresh token rotation
 │   ├── conversations/ # create/list conversations (1-to-1 and group)
-│   └── messages/      # send, edit, delete, paginated fetch
+│   ├── messages/      # send, edit, delete, paginated fetch
+│   └── health/         # health check endpoint
 ├── sockets/            # real-time layer
 │   ├── index.js          # Socket.IO server bootstrap
 │   ├── presence.js        # in-memory online/offline connection tracking
@@ -46,6 +55,17 @@ tests/
 ├── integration/          # full HTTP request/response tests via Supertest, real test DB
 ├── helpers/               # shared test utilities (e.g. test user creation)
 └── setup.js                # loads .env.test before any test runs
+
+docker/
+├── docker-compose.yml    # API + Postgres + Redis + pgAdmin + Nginx
+└── nginx/
+    └── nginx.conf          # reverse proxy config with WebSocket upgrade headers
+
+.github/
+└── workflows/
+    └── ci.yml              # lint → migrate → test → build, on push/PR to main
+
+Dockerfile                 # multi-stage build (builder + production image)
 ```
 
 ## Features Implemented So Far
@@ -76,6 +96,7 @@ tests/
 - **Live messaging** (`message:send` / `message:receive`): socket events reuse the exact same service-layer functions as the REST message endpoints, guaranteeing identical validation, authorization, and persistence — messages sent over the socket are saved to the database exactly like REST-sent messages
 - **Typing indicators** (`typing:start` / `typing:stop`): lightweight, ephemeral broadcasts with no database involvement; correctly excludes the sender from receiving their own typing event
 - **Presence tracking** (`presence:online` / `presence:offline`): tracks online status per user (not per connection) using a connection-count map, so a user with multiple open tabs/devices is only marked offline once _all_ of their connections close; presence changes are broadcast once per user even when they share multiple conversations with the observer, avoiding duplicate events
+- **Redis adapter**: Socket.IO state (rooms, broadcasts) is shared via Redis pub/sub, allowing multiple API instances to serve the same real-time layer without sticky sessions
 
 ### Automated Testing
 
@@ -84,10 +105,21 @@ tests/
 - Coverage includes happy paths, validation failures, authorization boundaries (e.g. non-participants blocked from reading/writing), and business-logic edge cases such as refresh token reuse detection and conversation deduplication
 - Rate limiting is automatically bypassed in the test environment so it doesn't interfere with tests unrelated to it, while remaining fully active in development/production
 
+### DevOps & Deployment
+
+- **Multi-stage Dockerfile**: a `builder` stage installs full dependencies (including the Prisma CLI) to generate the Prisma client; the final production image installs only production dependencies, keeping the shipped image lean
+- **Docker Compose stack**: API, Postgres, Redis, pgAdmin, and Nginx all run as networked containers, brought up with a single command
+- **Healthcheck-gated startup**: the API container waits for Postgres and Redis to report actually healthy (not just "started") before it boots, preventing race-condition crashes on cold start
+- **Nginx reverse proxy**: sits in front of the API as the only publicly exposed port, with `Upgrade`/`Connection` headers correctly configured so Socket.IO's WebSocket handshake passes through cleanly instead of being silently downgraded to plain HTTP
+- **Environment-based config**: all secrets and connection strings are injected via `.env`, never hardcoded or committed
+- **`/health` endpoint**: a lightweight liveness check suitable for container orchestration
+- **CI pipeline (GitHub Actions)**: on every push/PR to `main`, an isolated pipeline spins up its own Postgres and Redis, generates the Prisma client, applies migrations, lints, runs the full test suite, and confirms the Docker image builds — all before code is considered good
+
 ## API Endpoints (implemented so far)
 
 | Method | Endpoint                                  | Auth required | Description                                              |
 | ------ | ----------------------------------------- | :-----------: | -------------------------------------------------------- |
+| GET    | `/health`                                 |      No       | Liveness check for orchestration/monitoring              |
 | POST   | `/auth/register`                          |      No       | Create a new user account                                |
 | POST   | `/auth/login`                             |      No       | Log in, receive access + refresh tokens                  |
 | POST   | `/auth/refresh`                           |      No       | Exchange a valid refresh token for a new token pair      |
@@ -97,6 +129,14 @@ tests/
 | POST   | `/conversations/:conversationId/messages` |      Yes      | Send a message                                           |
 | PATCH  | `/conversations/messages/:messageId`      |      Yes      | Edit a message (sender only)                             |
 | DELETE | `/conversations/messages/:messageId`      |      Yes      | Soft-delete a message (sender only)                      |
+
+## API Documentation
+
+A ready-to-use Postman collection is available in `docs/`:
+
+1. Import `docs/Realtime Chat API.postman_collection.json`
+2. Import `docs/Realtime Chat API.postman_environment.json` and select it as the active environment
+3. Run **Login** or **Register** first — the access/refresh tokens are captured automatically and reused by every other request
 
 ## Socket.IO Events (implemented so far)
 
@@ -111,16 +151,38 @@ Connections must send a valid access token via `socket.handshake.auth.token`.
 | `presence:online`  | Server → Room(s)       | Broadcast that a user has come online (first connection)        |
 | `presence:offline` | Server → Room(s)       | Broadcast that a user has gone offline (last connection closed) |
 
-## Local Setup
+## Running with Docker (recommended)
 
-**Prerequisites:** Node.js, Docker
+**Prerequisites:** Docker Desktop
+
+```bash
+# Copy env template and fill in real values
+cp .env.example .env
+
+# Build and start the full stack: API, Postgres, Redis, pgAdmin, Nginx
+docker compose -f docker/docker-compose.yml --env-file .env up -d --build
+
+# Apply database migrations inside the running API container
+docker exec -it chat_api npx prisma migrate deploy
+```
+
+The API is reachable through Nginx at `http://localhost` (port 80) — not directly on port 3000, which is intentionally not exposed to the host. pgAdmin is available at `http://localhost:5050`.
+
+```bash
+# Confirm everything is healthy
+curl http://localhost/health
+```
+
+## Local Setup (without Docker)
+
+**Prerequisites:** Node.js 22, Docker (for Postgres/Redis only)
 
 ```bash
 # Install dependencies
 npm install
 
-# Start PostgreSQL
-docker compose -f docker/docker-compose.yml up -d
+# Start Postgres and Redis only
+docker compose -f docker/docker-compose.yml --env-file .env up -d postgres redis
 
 # Copy env template and fill in real values
 cp .env.example .env
@@ -148,7 +210,7 @@ npx prisma migrate deploy
 npm test
 ```
 
-`.env.test` holds the test environment's configuration and is loaded automatically before tests run.
+`.env.test` holds the test environment's configuration and is loaded automatically before tests run. The same lint → migrate → test sequence runs automatically in CI on every push/PR to `main`.
 
 ## Design Decisions
 
@@ -160,8 +222,7 @@ A few choices worth calling out, since they reflect deliberate tradeoffs rather 
 - **Shared service layer between REST and sockets** — rather than reimplementing message-sending logic for the socket handler, it calls the exact same service function the REST endpoint uses. This guarantees both interfaces behave identically and eliminates an entire class of bugs where the two could silently drift apart.
 - **Connection-count presence tracking, not connection-existence** — presence is tracked as a count per user rather than a boolean per socket, so a user with multiple open tabs or devices isn't incorrectly marked offline when only one of their connections closes.
 - **Isolated test database over shared dev database** — running tests against the same database used for manual development testing would cause tests to interfere with each other and with manual testing sessions. A dedicated test database keeps automated tests deterministic and repeatable.
+- **Multi-stage Docker build** — generating the Prisma client requires the Prisma CLI, which is a dev dependency and unnecessary bloat in a production image. A `builder` stage handles generation with full dependencies installed; the final image copies over only the generated output and production dependencies, keeping the shipped image smaller and reducing its attack surface.
+- **Healthcheck-gated container startup over plain `depends_on`** — Docker's default `depends_on` only waits for a container to _start_, not for the service inside it to actually be ready to accept connections. Gating startup on real healthchecks (`pg_isready`, `redis-cli ping`) prevents the API from crashing against a database that technically exists but isn't accepting connections yet.
+- **Nginx as the sole public entry point** — the API container is not directly exposed to the host; all traffic is routed through Nginx. This mirrors how real deployments isolate application servers behind a reverse proxy, and centralizes where concerns like TLS termination or request logging would be added later.
 - **Plain JavaScript, not TypeScript** — chosen deliberately to build a solid grasp of Node.js fundamentals (ES modules, async patterns, Express internals) before introducing a type system on top.
-
-## What's Coming Next
-
-Redis-backed horizontal scaling (allowing multiple server instances to share socket state) and a full Docker/CI deployment setup are planned next.
